@@ -12,7 +12,7 @@
 #     name: python3
 # ---
 
-# # Numba v2 Compiler Design <img src="https://numba.pydata.org/_static/numba-blue-icon-rgb.svg" width="80" style="float:right;"/>
+# # NumbaCC Compiler Design <img src="https://numba.pydata.org/_static/numba-blue-icon-rgb.svg" width="80" style="float:right;"/>
 #
 # This book describes the compiler design of the next generation Numba compiler.  This compiler and its components are *extremely experimental* and under rapid development.  If you have questions, [raise an issue](https://github.com/numba/numba-prototypes/issues) on the GitHub repository.
 #

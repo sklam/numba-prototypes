@@ -9,7 +9,7 @@
 # Define source directory and output directory
 PY_FILES := $(wildcard ch[0-9]*.py) $(wildcard demo[0-9]*.py) index.py
 IPYNB_FILES := $(patsubst %.py,%.ipynb,$(PY_FILES))
-PAGES_SUBDIR := ../pages/sealir_tutorials
+PAGES_SUBDIR := ../pages/numbacc-tutorials
 PRE_RENDERED_HTML_FILES := $(wildcard *.pre_rendered.html)
 HTML_FILES := $(patsubst %.ipynb,$(PAGES_SUBDIR)/%.html,$(IPYNB_FILES)) $(patsubst %.pre_rendered.html,$(PAGES_SUBDIR)/%.pre_rendered.html,$(PRE_RENDERED_HTML_FILES))
 
