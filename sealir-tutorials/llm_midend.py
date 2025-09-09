@@ -1597,18 +1597,20 @@ class MlirBackend(_ch06_MlirBackend):
             # TODO: make this use static shape
             assert ty.dtype == "Float64"
             with self.context:
-                with Location.unknown():
+                with Location.name("MlirBackend.lower_type"):
                     element_type = F64Type.get()
-                    return MemRefType.get([ShapedType.get_dynamic_size()] * ty.ndim, element_type)
+                    return MemRefType.get(ty.shape, element_type)
         else:
             return super().lower_type(ty)
 
     def lower_expr(self, expr: SExpr, state: LowerStates):
-        match expr:
-            case LLM_generic(desc=str(op), operands=tuple(operands)):
-                return self._lower_llm_ops(op, operands, state)
-            case _:
-                return super().lower_expr(expr, state)
+        from mlir import ir
+        with ir.Location.name(f"lower_expr({expr})"):
+            match expr:
+                case LLM_generic(desc=str(op), operands=tuple(operands)):
+                    return self._lower_llm_ops(op, operands, state)
+                case _:
+                    return super().lower_expr(expr, state)
 
     def _get_func_by_name(self, fname: str):
         for decl in self.module.body:
@@ -1644,11 +1646,14 @@ class MlirBackend(_ch06_MlirBackend):
         return memref.CastOp(out_type, result)
 
 
-    def _handle_binop_ufunc(self, lhs_val, rhs_val, outshape, op):
+    def _handle_binop_ufunc(self, lhs_val, rhs_val, lhs_shape, rhs_shape, outshape, op):
         from mlir.dialects import arith, func, memref, linalg, math
         from mlir import ir
         be: LlamaBackend = self.codegen
         shape = TypeSpeller.apply(outshape)
+        lhs_shape = TypeSpeller.apply(lhs_shape)
+        rhs_shape = TypeSpeller.apply(rhs_shape)
+        assert lhs_shape == rhs_shape
         nd = len(shape)
         fname_sub = be.gen_array_binary(self.module, nd, nd, op, None)
         f_sub = self._get_func_by_name(fname_sub)
@@ -1701,16 +1706,16 @@ class MlirBackend(_ch06_MlirBackend):
                 return result
 
             case "NpyOp_Add_Shaped<lhs, rhs, lhs_shape, rhs_shape, outshape>", (lhs, rhs, lhs_shape, rhs_shape, outshape):
-                return self._handle_binop_ufunc((yield lhs), (yield rhs), outshape, op=arith.addf)
+                return self._handle_binop_ufunc((yield lhs), (yield rhs), lhs_shape, rhs_shape, outshape, op=arith.addf)
 
             case "NpyOp_Subtract_Shaped<lhs, rhs, lhs_shape, rhs_shape, outshape>", (lhs, rhs, lhs_shape, rhs_shape, outshape):
-                return self._handle_binop_ufunc((yield lhs), (yield rhs), outshape, op=arith.subf)
+                return self._handle_binop_ufunc((yield lhs), (yield rhs), lhs_shape, rhs_shape, outshape, op=arith.subf)
 
             case "NpyOp_Multiply_Shaped<lhs, rhs, lhs_shape, rhs_shape, outshape>", (lhs, rhs, lhs_shape, rhs_shape, outshape):
-                return self._handle_binop_ufunc((yield lhs), (yield rhs), outshape, op=arith.mulf)
+                return self._handle_binop_ufunc((yield lhs), (yield rhs), lhs_shape, rhs_shape, outshape, op=arith.mulf)
 
             case "NpyOp_Divide_Shaped<lhs, rhs, lhs_shape, rhs_shape, outshape>", (lhs, rhs, lhs_shape, rhs_shape, outshape):
-                return self._handle_binop_ufunc((yield lhs), (yield rhs), outshape, op=arith.divf)
+                return self._handle_binop_ufunc((yield lhs), (yield rhs), lhs_shape, rhs_shape, outshape, op=arith.divf)
 
             case "NpyOp_Max_Shaped<operand, axis, keepdims, inshape, outshape>", (operand, axis, True, inshape, outshape):
                 # Implements np.max(operand, axis, keepdims=True)
@@ -1719,41 +1724,44 @@ class MlirBackend(_ch06_MlirBackend):
                 if axis < 0:
                     axis = nd + axis
                 fname_reduce = be.gen_array_reduce(self.module, nd, (axis,), arith.maximumf, None)
-                fn_reduce = self._get_func_by_name(fname_reduce)
-                [operand_type, result_type] = fn_reduce.type.inputs
+                # fn_reduce = self._get_func_by_name(fname_reduce)
+                # [operand_type, result_type] = fn_reduce.type.inputs
                 opval = (yield operand)
 
                 # Extract input dimensions for reduced result (all dims except the reduced one)
-                reduced_dims = []
-                for i in range(nd):
-                    if axis != i:
-                        idx = arith.ConstantOp(ir.IndexType.get(), i)
-                        reduced_dims.append(memref.DimOp(opval, idx))
+                element_type = ir.F64Type.get()
+                reduced_shape = list(shape)
+                reduced_shape.pop(axis)
+                memref_type = ir.MemRefType.get(reduced_shape, element_type)
+                result_reduced = memref.AllocOp(memref_type, [], [])
+                # func.call((), fname_reduce, [opval, result_reduced])
 
-                dynshape = ir.ShapedType.get_dynamic_size()
-                reduced_shape = [dynshape] * (nd - 1)
-                memref_type = ir.MemRefType.get(reduced_shape, result_type.element_type)
-                result_reduced = memref.AllocOp(memref_type, reduced_dims, [])
-                func.call((), fname_reduce, [opval, result_reduced])
+                input_memref = opval
 
-                # broadcast - need to add dimension back at the axis position
-                print(result_type)
-                # Build final shape with keepdims=True (reduced dim becomes dynamic size)
-                # Need to add the size-1 dimension back for allocation
-                print("***HACK***")
-                axis_shape = memref.DimOp(opval, arith.ConstantOp(ir.IndexType.get(), axis))
-                final_dims = reduced_dims.copy()
-                final_dims.insert(axis, axis_shape)
+                reduce_op = linalg.ReduceOp(
+                    result=[],
+                    inputs=[input_memref],
+                    inits=[result_reduced],
+                    dimensions=[axis]
+                )
 
-                final_shape = [dynshape] * nd
-                memref_type = ir.MemRefType.get(final_shape, result_type.element_type)
-                result = memref.AllocOp(memref_type, final_dims, [])
+                body = reduce_op.regions[0].blocks.append(
+                    element_type, element_type
+                )
+
+                with ir.InsertionPoint(body):
+                    linalg.YieldOp([arith.maximumf(body.arguments[0], body.arguments[1])])
+
+                # broadcast for keepdims
+                memref_type = ir.MemRefType.get(shape, element_type)
+                result = memref.AllocOp(memref_type, [], [])
                 linalg.broadcast(
                     result_reduced,
                     outs=[result],
-                    dimensions=[axis],
+                    dimensions=[axis]
                 )
                 return result
+
             case "NpyOp_Sum_Shaped<operand, axis, keepdims, inshape, outshape>", (operand, axis, True, inshape, outshape):
                 shape = TypeSpeller.apply(outshape)
                 nd = len(shape)
@@ -2020,20 +2028,15 @@ def softmax_max(x):
     return np.max(x, axis=-1, keepdims=True)
 
 
-@pytest.mark.xfail(reason="reduce broadcast is a hack",
-                   raises=AssertionError)
 def test_softmax_max():
     np.random.seed(0)
     _run_array_unary_test(softmax_max, np.random.random((3, 5)))
-
 
 
 def softmax_x_minus_max(x):
     return x - np.max(x, axis=-1, keepdims=True)
 
 
-@pytest.mark.xfail(reason="1d error",
-                   raises=AssertionError)
 def test_softmax_x_minux_max_1d():
     np.random.seed(0)
     _run_array_unary_test(softmax_x_minus_max, np.random.random(4))
