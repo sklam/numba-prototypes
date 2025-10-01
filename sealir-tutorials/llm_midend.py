@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from tracemalloc import start
 import pytest
 import inspect
@@ -2403,23 +2404,127 @@ class MlirBackend(_ch06_MlirBackend):
             # notebook may hang if ir_printing is enabled and and MLIR failed.
             pass_man.enable_ir_printing()
 
-        pass_man.add("canonicalize")
+        # pass_list = self.passes_affine_vector()
+        pass_list = self.passes_openmp()
 
-        pass_man.add("convert-linalg-to-loops")
-        pass_man.add("expand-strided-metadata")
-        pass_man.add("lower-affine")
-        pass_man.add("convert-scf-to-cf")
-        pass_man.add("finalize-memref-to-llvm")
-        pass_man.add("convert-math-to-libm")
-        pass_man.add("convert-func-to-llvm")
-        pass_man.add("convert-index-to-llvm")
-        pass_man.add("reconcile-unrealized-casts")
+        for ps in pass_list:
+            pass_man.add(ps)
+
         pass_man.enable_verifier(True)
         pass_man.run(module.operation)
         # Output LLVM-dialect MLIR
         if _DEBUG:
             module.dump()
         return module
+
+    def passes_default(self):
+        return [
+            "canonicalize",
+            "convert-linalg-to-loops",
+            "expand-strided-metadata",
+            "lower-affine",
+            "convert-scf-to-cf",
+            "finalize-memref-to-llvm",
+            "convert-math-to-libm",
+            "convert-func-to-llvm",
+            "convert-index-to-llvm",
+            "reconcile-unrealized-casts",
+        ]
+
+    def passes_affine_vector(self):
+        defaults = {'tile_L1': 47,
+                    'tile_L2': 12,
+                    'tile_L3': 8,
+                    'unroll_factor': 5,
+                    'vector_size': 8}
+
+        tile_L1 = os.environ.get("LLM_tile_L1", defaults['tile_L1'])
+        tile_L2 = os.environ.get("LLM_tile_L2", defaults['tile_L2'])
+        tile_L3 = os.environ.get("LLM_tile_L3", defaults['tile_L3'])
+        unroll_factor = os.environ.get("LLM_unroll_factor", defaults['unroll_factor'])
+        vector_size = os.environ.get("LLM_vector_size", defaults['vector_size'])
+        return [
+            "canonicalize",
+            "cse",
+
+            # affine optimization
+            "func.func(convert-linalg-to-affine-loops)",
+            "func.func(affine-loop-fusion)",
+            f"func.func(affine-loop-tile{{tile-sizes={tile_L1},{tile_L2},{tile_L3}}})",
+
+
+            f"func.func(affine-loop-unroll{{unroll-factor={unroll_factor}}})",
+            "func.func(affine-scalrep)",
+            f"func.func(affine-super-vectorize{{virtual-vector-size={vector_size} vectorize-reductions}})",
+
+            "expand-strided-metadata",
+            "lower-affine",
+
+            # alloc/dealloc
+            'one-shot-bufferize{bufferize-function-boundaries}',
+            "buffer-deallocation-pipeline",
+            "convert-bufferization-to-memref",
+
+            # SIMD arch specific
+            "convert-vector-to-llvm{enable-arm-sve enable-arm-neon reassociate-fp-reductions}",
+
+            "convert-scf-to-openmp",
+            "normalize-memrefs",
+            "convert-scf-to-cf",
+            "finalize-memref-to-llvm",
+            "convert-math-to-libm",
+            "convert-func-to-llvm",
+            "convert-index-to-llvm",
+            "reconcile-unrealized-casts",
+        ]
+
+    def passes_openmp(self):
+        defaults = {'tile_L1': 11, 'tile_L2': 7, 'tile_L3': 64, 'unroll_factor': 7, 'vector_size': 1}
+
+        tile_L1 = os.environ.get("LLM_tile_L1", defaults['tile_L1'])
+        tile_L2 = os.environ.get("LLM_tile_L2", defaults['tile_L2'])
+        tile_L3 = os.environ.get("LLM_tile_L3", defaults['tile_L3'])
+        unroll_factor = os.environ.get("LLM_unroll_factor", defaults['unroll_factor'])
+        vector_size = os.environ.get("LLM_vector_size", defaults['vector_size'])
+        passes = [
+            "canonicalize",
+            "cse",
+
+            "func.func(convert-linalg-to-affine-loops)",
+            f"func.func(affine-loop-tile{{tile-sizes={tile_L1},{tile_L2},{tile_L3}}})",
+            "func.func(affine-parallelize{max-nested=2 parallel-reductions})",
+            "func.func(affine-loop-fusion)",
+
+            f"func.func(affine-loop-unroll{{unroll-factor={unroll_factor}}})",
+            "func.func(affine-scalrep)",
+        ]
+
+        if int(vector_size) > 1:
+            passes += [
+                f"func.func(affine-super-vectorize{{virtual-vector-size={vector_size} vectorize-reductions}})",
+            ]
+        passes += [
+            "expand-strided-metadata",
+            "lower-affine",
+
+
+            # alloc/dealloc
+            'one-shot-bufferize{bufferize-function-boundaries}',
+            "buffer-deallocation-pipeline",
+            "convert-bufferization-to-memref",
+
+            "convert-vector-to-llvm{enable-arm-sve enable-arm-neon reassociate-fp-reductions}",
+
+            "convert-scf-to-openmp",
+            "finalize-memref-to-llvm",
+            "convert-scf-to-cf",
+            "convert-openmp-to-llvm",
+            "convert-vector-to-llvm",
+            "convert-arith-to-llvm",
+            "convert-func-to-llvm",
+            "reconcile-unrealized-casts ",
+        ]
+        return passes
 
     def get_last_compiled_return_type(self):
         return self._retty
@@ -3287,7 +3392,7 @@ class MlirBackend(_ch06_MlirBackend):
         in_types, out_types = [], []
 
         from ctypes.util import find_library
-        needed_shared_libs = ("mlir_c_runner_utils", "mlir_runner_utils")
+        needed_shared_libs = ("mlir_c_runner_utils", "mlir_runner_utils", "iomp5")
         shared_libs = [find_library(x) for x in needed_shared_libs]
 
         module = self.module
@@ -3344,33 +3449,37 @@ class MlirBackend(_ch06_MlirBackend):
         def jit_func(*args):
             import time
 
-            pstart = time.time_ns()
-            input_args = args
+            for _ in range(3):  # run this 3 times
+                pstart = time.time_ns()
+                input_args = args
 
-            assert len(input_args) == len(input_types)
+                assert len(input_args) == len(input_types)
 
-            input_exec_ptrs = [
-                self.get_exec_ptr(ty, val)[0]
-                for ty, val in zip(input_types, input_args)
-            ]
+                input_exec_ptrs = [
+                    self.get_exec_ptr(ty, val)[0]
+                    for ty, val in zip(input_types, input_args)
+                ]
 
-            with self.context:
-                assert out_type.element_type == ir.F64Type.get()
-            res_val = runtime.make_nd_memref_descriptor(
-                rank=out_type.rank, dtype=ctypes.c_double
-            )()
-            res_ptr = ctypes.pointer(res_val)
-            pend = time.time_ns()
-            # Call the JIT-compiled function via the execution engine.
-            jstart = time.time_ns()
-            engine.invoke(function_name, ctypes.byref(res_ptr), *input_exec_ptrs)
-            jend = time.time_ns()
+                with self.context:
+                    assert out_type.element_type == ir.F64Type.get()
+                res_val = runtime.make_nd_memref_descriptor(
+                    rank=out_type.rank, dtype=ctypes.c_double
+                )()
+                res_ptr = ctypes.pointer(res_val)
+                pend = time.time_ns()
+                # Call the JIT-compiled function via the execution engine.
+                jstart = time.time_ns()
+                engine.invoke(function_name, ctypes.byref(res_ptr), *input_exec_ptrs)
+                jend = time.time_ns()
 
-            # Convert the result back to a numpy array.
-            tstart = time.time_ns()
-            out = runtime.ranked_memref_to_numpy(res_ptr)
-            tend = time.time_ns()
-            print(f"MLIRGen: To Memref {(pend - pstart)/1000} microseconds, Exec {(jend-jstart)/1000} microseconds, To NumPy {(tend-tstart)/1000} microseconds")
+                # Convert the result back to a numpy array.
+                tstart = time.time_ns()
+                out = runtime.ranked_memref_to_numpy(res_ptr)
+                tend = time.time_ns()
+                print(f"MLIRGen: To Memref {(pend - pstart)/1000} microseconds, Exec {(jend-jstart)/1000} microseconds, To NumPy {(tend-tstart)/1000} microseconds")
+                if 'LLM_bench_output' in os.environ:
+                    with open(os.environ["LLM_bench_output"], "a") as fout:
+                        print((jend-jstart)/1000, file=fout)
             return out
 
 
@@ -3685,6 +3794,19 @@ def attention_matmul(x, q_weight):
     return np.matmul(x, q_weight)
 
 
+def test_matmul_performance():
+    # Testing for:
+    #   x @ q_weight
+    np.random.seed(0)
+
+    N = 50          # original 5
+    D = 288 * 10     # original 288
+    x = np.random.random((1, N, D))
+    q_weight = np.random.random((D, D))
+    # test compiler on llm use case
+    _run_array_test(attention_matmul, (x, q_weight))
+
+
 def test_attention_matmul():
     # Testing for:
     #   x @ q_weight
@@ -3981,10 +4103,11 @@ def _run_array_unary_test(target_function, inary):
 def _run_array_test(target_function, args):
     import time
 
-    start = time.time_ns()
-    desired = target_function(*args)
-    end = time.time_ns()
-    print("\nNumPy: Exec {:.3f} microseconds".format((end - start) / 1000))
+    for _ in range(3):  # run this 3 times
+        start = time.time_ns()
+        desired = target_function(*args)
+        end = time.time_ns()
+        print("\nNumPy: Exec {:.3f} microseconds".format((end - start) / 1000))
 
     try:
         cres = run_compiler(target_function, args)
