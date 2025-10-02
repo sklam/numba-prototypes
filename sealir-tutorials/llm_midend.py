@@ -92,18 +92,18 @@ with open(source_filename, "r") as fin:
 cgv = CallGraphVisitor(source_code, source_filename)
 cgv.visit_all()
 
-print("########## Symbol Table ##########")
-pprint(cgv.functions)
-print("########## ------------ ##########")
-print("########## Global Calls ##########")
-pprint(cgv.global_calls)
-print("########## ------------ ##########")
-print("########## Call Graph   ##########")
-pprint(cgv.get_call_graph())
-print("########## ------------ ##########")
-print("########## Module Imported   ##########")
-pprint(cgv.imported)
-print("########## ------------ ##########")
+# print("########## Symbol Table ##########")
+# pprint(cgv.functions)
+# print("########## ------------ ##########")
+# print("########## Global Calls ##########")
+# pprint(cgv.global_calls)
+# print("########## ------------ ##########")
+# print("########## Call Graph   ##########")
+# pprint(cgv.get_call_graph())
+# print("########## ------------ ##########")
+# print("########## Module Imported   ##########")
+# pprint(cgv.imported)
+# print("########## ------------ ##########")
 
 
 #######################################
@@ -2479,7 +2479,12 @@ class MlirBackend(_ch06_MlirBackend):
         ]
 
     def passes_openmp(self):
-        defaults = {'tile_L1': 11, 'tile_L2': 7, 'tile_L3': 64, 'unroll_factor': 7, 'vector_size': 1}
+        # for small sizes
+        # defaults = {'tile_L1': 23, 'tile_L2': 7, 'tile_L3': 42, 'unroll_factor': 5, 'vector_size': 1}
+        # for bigger sizes
+        # defaults = {'tile_L1': 56, 'tile_L2': 62, 'tile_L3': 56, 'unroll_factor': 4, 'vector_size': 1}
+        # for large sizes
+        defaults = {'tile_L1': 15, 'tile_L2': 27, 'tile_L3': 58, 'unroll_factor': 8, 'vector_size': 1}
 
         tile_L1 = os.environ.get("LLM_tile_L1", defaults['tile_L1'])
         tile_L2 = os.environ.get("LLM_tile_L2", defaults['tile_L2'])
@@ -2503,6 +2508,7 @@ class MlirBackend(_ch06_MlirBackend):
             passes += [
                 f"func.func(affine-super-vectorize{{virtual-vector-size={vector_size} vectorize-reductions}})",
             ]
+
         passes += [
             "expand-strided-metadata",
             "lower-affine",
@@ -3799,10 +3805,16 @@ def test_matmul_performance():
     #   x @ q_weight
     np.random.seed(0)
 
-    N = 50          # original 5
-    D = 288 * 10     # original 288
-    x = np.random.random((1, N, D))
-    q_weight = np.random.random((D, D))
+    M = 5          # original 5
+    N = 288        # original 288
+
+    M = int(os.environ.get('LLM_matmul_M', M))
+    N = int(os.environ.get('LLM_matmul_N', N))
+
+    x = np.random.random((1, M, N))
+    q_weight = np.random.random((N, N))
+    print("x.shape", x.shape)
+    print("q_weight.shape", q_weight.shape)
     # test compiler on llm use case
     _run_array_test(attention_matmul, (x, q_weight))
 

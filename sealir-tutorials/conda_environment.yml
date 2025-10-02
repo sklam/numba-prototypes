@@ -18,9 +18,10 @@ dependencies:
   - make
   - graphviz
   - pygraphviz
+  - llvm-openmp 
   - pip
   - pip:
-    - egglog
+    - egglog==10
     - numba_rvsdg
-    - git+https://github.com/numba/sealir
+    - git+https://github.com/sklam/sealir@wip/updates
     - pytest-xdist

@@ -7,6 +7,7 @@ Requirements
 """
 
 import os
+import sys
 import tempfile
 import optuna
 from multiprocessing import Process
@@ -38,6 +39,8 @@ def run(tile_L1, tile_L2, tile_L3, unroll_factor, vector_size, bench_output):
 
 
 def main():
+    n_trials = int(sys.argv[1]) if len(sys.argv) > 1 else 50
+
     def objective(trial):
         with tempfile.NamedTemporaryFile(mode="a") as tmpfile:
 
@@ -55,7 +58,7 @@ def main():
             return r
 
     study = optuna.create_study(direction='minimize')
-    study.optimize(objective, n_trials=150)
+    study.optimize(objective, n_trials=n_trials)
 
     trial = study.best_trial
 
