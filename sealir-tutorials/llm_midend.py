@@ -3114,7 +3114,7 @@ class MlirBackend(_ch06_MlirBackend):
                     ir.AffineMap.get_identity(nd),
                     ir.AffineMap.get_identity(nd)
                 ],
-                iterator_types=ir.ArrayAttr.get([ir.Attribute.parse("#linalg.iterator_type<parallel>")]*2)
+                iterator_types=ir.ArrayAttr.get([ir.Attribute.parse("#linalg.iterator_type<parallel>")]*nd),
             )
 
             body = generic_op.regions[0].blocks.append(
@@ -3150,7 +3150,7 @@ class MlirBackend(_ch06_MlirBackend):
                 ir.AffineMap.get_identity(nd),
                 ir.AffineMap.get_identity(nd)
             ],
-            iterator_types=ir.ArrayAttr.get([ir.Attribute.parse("#linalg.iterator_type<parallel>")])
+            iterator_types=ir.ArrayAttr.get([ir.Attribute.parse("#linalg.iterator_type<parallel>")]*nd),
         )
 
         body = generic_op.regions[0].blocks.append(
