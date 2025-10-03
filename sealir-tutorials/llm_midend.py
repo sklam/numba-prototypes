@@ -2385,7 +2385,7 @@ def _mlir_location_from_frame(info: str=""):
 
 from ch06_mlir_backend import Backend as _ch06_MlirBackend, LowerStates
 
-_DEBUG = True
+_DEBUG = False
 
 class MlirBackend(_ch06_MlirBackend):
     def __init__(self):
@@ -2483,13 +2483,29 @@ class MlirBackend(_ch06_MlirBackend):
         # for bigger sizes
         # defaults = {'tile_L1': 56, 'tile_L2': 62, 'tile_L3': 56, 'unroll_factor': 4, 'vector_size': 1}
         # for large sizes
-        defaults = {'tile_L1': 15, 'tile_L2': 27, 'tile_L3': 58, 'unroll_factor': 8, 'vector_size': 1}
 
-        tile_L1 = os.environ.get("LLM_tile_L1", defaults['tile_L1'])
-        tile_L2 = os.environ.get("LLM_tile_L2", defaults['tile_L2'])
-        tile_L3 = os.environ.get("LLM_tile_L3", defaults['tile_L3'])
-        unroll_factor = os.environ.get("LLM_unroll_factor", defaults['unroll_factor'])
-        vector_size = os.environ.get("LLM_vector_size", defaults['vector_size'])
+
+        # defaults = {'tile_L1': 15, 'tile_L2': 27, 'tile_L3': 58, 'unroll_factor': 8, 'vector_size': 1}
+
+        params = {'t1': 1024, 't2': 1, 't3': 1, 'unroll_factor': 2, 'vector_size': 1}
+        tile_L3 = params['t1']
+        tile_L2 = params['t2'] * tile_L3
+        tile_L1 = params['t3'] * tile_L2
+
+        tile_L1 = os.environ.get("LLM_tile_L1", tile_L1)
+        tile_L2 = os.environ.get("LLM_tile_L2", tile_L2)
+        tile_L3 = os.environ.get("LLM_tile_L3", tile_L3)
+        unroll_factor = os.environ.get("LLM_unroll_factor", params['unroll_factor'])
+        vector_size = os.environ.get("LLM_vector_size", params['vector_size'])
+
+        print(f'''
+        tile_L1={tile_L1}
+        tile_L2={tile_L2}
+        tile_L3={tile_L3}
+        unroll_factor={unroll_factor}
+        vector_size={vector_size}
+        '''
+        )
         passes = [
             "canonicalize",
             "cse",
@@ -3457,7 +3473,7 @@ class MlirBackend(_ch06_MlirBackend):
         def jit_func(*args):
             import time
 
-            for _ in range(3):  # run this 3 times
+            for _ in range(N_REPEAT):
                 pstart = time.time_ns()
                 input_args = args
 
@@ -4104,8 +4120,7 @@ def test_identity():
 
 DEBUG = False
 PLOT = False
-n_repeats = 5
-n_runs = 10
+N_REPEAT = 5
 func1_name = "NumPy"
 func2_name = "MLIRGen"
 done_names = set()
@@ -4117,7 +4132,7 @@ def _run_array_unary_test(target_function, inary):
 def _run_array_test(target_function, args):
     import time
 
-    for _ in range(3):  # run this 3 times
+    for _ in range(N_REPEAT):
         start = time.time_ns()
         desired = target_function(*args)
         end = time.time_ns()
