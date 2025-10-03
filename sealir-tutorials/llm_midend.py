@@ -2385,7 +2385,7 @@ def _mlir_location_from_frame(info: str=""):
 
 from ch06_mlir_backend import Backend as _ch06_MlirBackend, LowerStates
 
-_DEBUG = False
+_DEBUG = True
 
 class MlirBackend(_ch06_MlirBackend):
     def __init__(self):
@@ -2468,7 +2468,6 @@ class MlirBackend(_ch06_MlirBackend):
             # SIMD arch specific
             "convert-vector-to-llvm{enable-arm-sve enable-arm-neon reassociate-fp-reductions}",
 
-            "convert-scf-to-openmp",
             "normalize-memrefs",
             "convert-scf-to-cf",
             "finalize-memref-to-llvm",
@@ -2523,12 +2522,15 @@ class MlirBackend(_ch06_MlirBackend):
 
             "convert-scf-to-openmp",
             "finalize-memref-to-llvm",
+            "convert-math-to-libm",
             "convert-scf-to-cf",
             "convert-openmp-to-llvm",
             "convert-vector-to-llvm",
             "convert-arith-to-llvm",
+            "convert-math-to-libm",
             "convert-func-to-llvm",
             "reconcile-unrealized-casts ",
+
         ]
         return passes
 
